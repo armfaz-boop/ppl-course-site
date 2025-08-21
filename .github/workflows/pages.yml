@@ -1,4 +1,3 @@
-
 name: Deploy static site to Pages
 
 on:
@@ -12,6 +11,7 @@ permissions:
   id-token: write
 
 concurrency:
+  # Ensures only one Pages deploy is running; cancels older duplicates.
   group: "pages"
   cancel-in-progress: true
 
@@ -21,10 +21,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Official step: configures the GitHub Pages environment
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      # Upload your static site files (repo root)
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Deploy the repo root (where index.html and app.js live)
           path: .
 
   deploy:
