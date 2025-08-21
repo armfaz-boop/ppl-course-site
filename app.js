@@ -1,30 +1,42 @@
-// ====================== Simple SPA Router ======================
+// ============== Tiny in-page logger ==============
+function toast(msg){
+  const t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = String(msg);
+  t.style.display = 'block';
+}
+window.addEventListener('error', e => toast('JS error: ' + (e.message || e.error || 'unknown')));
+
+// ============== Router ==============
 const app = document.getElementById('app');
 
 function render(route) {
-  const hash = (route || '').replace(/^#/, '');
-  const [base, qs] = hash.split('?');
-  const params = new URLSearchParams(qs || '');
-  switch ((base || 'home').toLowerCase()) {
-    case 'server-quiz':  return renderServerQuizFromURL(params);
-    case 'lesson':       return renderLessonFromURL(params);
-    case 'assignments':  return renderAssignmentsGate(); // <-- restored login gate
-    default:             return renderHome();
+  try {
+    const hash = (route || '').replace(/^#/, '');
+    const [base, qs] = hash.split('?');
+    const params = new URLSearchParams(qs || '');
+    switch ((base || 'home').toLowerCase()) {
+      case 'server-quiz':  return renderServerQuizFromURL(params);
+      case 'lesson':       return renderLessonFromURL(params);
+      case 'assignments':  return renderAssignmentsGate();
+      default:             return renderHome();
+    }
+  } catch (err){
+    toast('Render error: ' + String(err));
   }
 }
 window.addEventListener('hashchange', () => render(location.hash));
-window.addEventListener('load', () => render(location.hash));
+window.addEventListener('load', () => render(location.hash || '#home'));
 
-// ====================== Views ======================
+// ============== Views ==============
 function renderHome() {
   app.innerHTML = `
     <div class="card">
       <h2>Welcome</h2>
-      <p>Use <strong>Lesson</strong> to embed a Google Slides deck and <strong>Quiz</strong> URLs to launch topic-mix quizzes.</p>
+      <p>Use <strong>Assignments</strong> to log in and start assigned quizzes.</p>
       <h3>Examples</h3>
       <ul>
         <li>Lesson: <code>#lesson?title=Regs&src=PASTE_SLIDES_EMBED_SRC</code></li>
-        <li>Quiz (single): <code>#server-quiz?lesson=KB01&pass=70&topics=G1.PGENINST-K:4</code></li>
         <li>Quiz (multi): <code>#server-quiz?lesson=KBQ1&pass=70&topics=G1.PGENINST-K:4,G5.PWTBAL-K:4,G6.PACPERFP-K:3,K2.PLTQALREG-K:6,K1.PFPREP-K:3</code></li>
       </ul>
       <p><a class="btn" href="#assignments">Go to Assignments</a></p>
@@ -41,15 +53,17 @@ function renderLessonFromURL(params) {
       <div class="card">
         ${src
           ? `<iframe style="width:100%;height:520px" frameborder="0" allowfullscreen src="${src}"></iframe>`
-          : `<p><em>No slide src provided. Publish your deck to the web → Embed, then paste the iframe <code>src</code> as the "src" param.</em></p>`}
+          : `<p><em>No slide src provided. Publish to web → Embed, then paste the iframe <code>src</code> as the "src" param.</em></p>`}
       </div>
     </div>
   `;
 }
 
-// ====================== Auth + Assignments ======================
+// ============== Auth + Assignments ==============
 function getConfig(){
   const cfg = (window.APP_CONFIG || {});
+  if (!cfg.SCRIPT_ENDPOINT) toast('CONFIG: missing SCRIPT_ENDPOINT');
+  if (!cfg.SHARED_SECRET)  toast('CONFIG: missing SHARED_SECRET');
   return { endpoint: cfg.SCRIPT_ENDPOINT, secret: cfg.SHARED_SECRET };
 }
 
@@ -77,7 +91,6 @@ async function fetchAssignments(token){
   const url = new URL(endpoint);
   url.searchParams.set('action','assignments');
   url.searchParams.set('token', token);
-  url.searchParams.set('debug','1'); // helpful while we’re testing
   const resp = await fetch(url.toString());
   const data = await resp.json().catch(async ()=>({ error: await resp.text() }));
   if (data.error) throw new Error(data.error);
@@ -85,10 +98,6 @@ async function fetchAssignments(token){
 }
 
 function renderAssignmentsGate(){
-  const sess = getSession();
-  if (sess && sess.token) {
-    return renderAssignmentsList();
-  }
   app.innerHTML = `
     <div class="card">
       <h2>Assignments</h2>
@@ -97,17 +106,26 @@ function renderAssignmentsGate(){
         <label>Email<br><input id="login_email" type="email" placeholder="you@example.com"></label><br><br>
         <label>Password<br><input id="login_pass" type="password" placeholder="••••••••"></label><br><br>
         <button class="btn" id="login_btn">Log in</button>
+        <button class="btn" id="logout_btn" style="display:none">Log out</button>
         <div id="login_msg" style="margin-top:.75rem;color:#b00;"></div>
       </div>
     </div>
   `;
+
+  // Attach handler robustly
   const btn = document.getElementById('login_btn');
-  btn.onclick = async () => {
-    const email = (document.getElementById('login_email').value || '').trim();
-    const pass  = (document.getElementById('login_pass').value || '').trim();
+  if (!btn) return toast('Login button not found in DOM');
+  btn.addEventListener('click', async () => {
+    const email = (document.getElementById('login_email')?.value || '').trim();
+    const pass  = (document.getElementById('login_pass')?.value || '').trim();
     const msgEl = document.getElementById('login_msg');
     msgEl.textContent = '';
+    if (!email || !pass) {
+      msgEl.textContent = 'Enter email and password.';
+      return;
+    }
     btn.disabled = true;
+    btn.textContent = 'Logging in…';
     try {
       const out = await loginRequest(email, pass);
       setSession({ token: out.token, user: out.user });
@@ -115,13 +133,19 @@ function renderAssignmentsGate(){
     } catch (err) {
       msgEl.textContent = 'Login failed: ' + String(err.message || err);
       btn.disabled = false;
+      btn.textContent = 'Log in';
     }
-  };
+  });
+
+  // If a session already exists, flip right to list
+  const sess = getSession();
+  if (sess && sess.token) renderAssignmentsList();
 }
 
 async function renderAssignmentsList(){
   const sess = getSession();
   if (!sess || !sess.token) return renderAssignmentsGate();
+
   app.innerHTML = `
     <div class="card">
       <h2>Assignments</h2>
@@ -130,17 +154,17 @@ async function renderAssignmentsList(){
       <div id="as_list" class="card"><em>Loading…</em></div>
     </div>
   `;
-  document.getElementById('logout_btn').onclick = () => { clearSession(); renderAssignmentsGate(); };
+  const lo = document.getElementById('logout_btn');
+  if (lo) lo.onclick = () => { clearSession(); location.hash = '#assignments'; };
 
   try {
-    const assignments = await fetchAssignments(sess.token);
+    const items = await fetchAssignments(sess.token);
     const box = document.getElementById('as_list');
-    if (!assignments.length) {
+    if (!items.length) {
       box.innerHTML = `<p><em>No active assignments.</em></p>`;
       return;
     }
-    // Render each assignment with a "Start" link that routes to server-quiz with the encoded topics
-    const items = assignments.map(a => {
+    box.innerHTML = items.map(a => {
       const topicsQS = encodeURIComponent(a.Topics || '');
       const passQS   = encodeURIComponent(a.Pass || '70');
       const lessonQS = encodeURIComponent(a.Lesson || '');
@@ -155,14 +179,14 @@ async function renderAssignmentsList(){
         </div>
       `;
     }).join('');
-    box.innerHTML = items;
   } catch (err) {
+    toast('Assignments error: ' + String(err.message || err));
     const box = document.getElementById('as_list');
-    box.innerHTML = `<p style="color:#b00">Error loading assignments: ${escapeHtml(err.message || err)}</p>`;
+    if (box) box.innerHTML = `<p style="color:#b00">Error: ${escapeHtml(err.message || err)}</p>`;
   }
 }
 
-// ====================== Backend helpers for quizzes ======================
+// ============== Quiz helpers ==============
 async function fetchQuizFromServer(topicsSpec) {
   const { endpoint, secret } = getConfig();
   const url = new URL(endpoint);
@@ -179,27 +203,22 @@ async function fetchQuizFromServer(topicsSpec) {
 async function submitQuizResults({ student, email, lesson, score, total, answers, passPercent }) {
   const { endpoint, secret } = getConfig();
   const url = new URL(endpoint);
-  url.searchParams.set('action', 'submit');  // must match doPost
+  url.searchParams.set('action', 'submit');
   url.searchParams.set('secret', secret);
-
   const resp = await fetch(url.toString(), {
     method: 'POST',
-    // no custom headers -> avoids CORS preflight
     body: JSON.stringify({ student, email, lesson, score, total, answers, passPercent })
   });
-
   if (!resp.ok) {
     const text = await resp.text().catch(()=>'(no body)');
     throw new Error(`Submit HTTP ${resp.status}: ${text.slice(0,200)}`);
   }
   const out = await resp.json().catch(async ()=>({ error: await resp.text() }));
-  if (out.error) {
-    throw new Error(out.error);
-  }
-  return out; // {status:'ok', pct, passed, ...}
+  if (out.error) throw new Error(out.error);
+  return out;
 }
 
-// ====================== Quiz view ======================
+// ============== Quiz view ==============
 async function renderServerQuizFromURL(params) {
   const lesson      = params.get('lesson') || '';
   const passPercent = Number(params.get('pass') || 70);
@@ -252,13 +271,12 @@ async function renderServerQuizFromURL(params) {
   norm.forEach((q, idx) => {
     const node = renderQuizQuestion(q, idx);
     node.querySelectorAll('input[type=radio]').forEach(r => {
-      r.onchange = () => selections[idx] = Number(r.value);
+      r.addEventListener('change', () => { selections[idx] = Number(r.value); });
     });
     qList.appendChild(node);
   });
 
-  // Submit handler (locks UI; no visible "retry"; shows PASS/FAIL; friendly duplicate message)
-  document.getElementById('q_submit').onclick = async () => {
+  document.getElementById('q_submit')?.addEventListener('click', async () => {
     const nameEl  = document.getElementById('q_name');
     const emailEl = document.getElementById('q_email');
     const name  = (nameEl?.value || '').trim();
@@ -313,10 +331,10 @@ async function renderServerQuizFromURL(params) {
         : 'Submit error: ' + escapeHtml(msg);
       showResult(friendly);
     }
-  };
+  });
 }
 
-// ====================== Question Renderer (with figure fallbacks) ======================
+// ============== Question renderer ==============
 function renderQuizQuestion(q, idx) {
   const container = document.createElement('div');
   container.className = 'question';
@@ -347,10 +365,7 @@ function renderQuizQuestion(q, idx) {
 
     let sidx = 0;
     img.src = sources[sidx];
-    img.onerror = () => {
-      sidx += 1;
-      if (sidx < sources.length) img.src = sources[sidx];
-    };
+    img.onerror = () => { sidx += 1; if (sidx < sources.length) img.src = sources[sidx]; };
 
     const cap = document.createElement('div');
     cap.className = 'figure-caption';
@@ -383,7 +398,7 @@ function renderQuizQuestion(q, idx) {
   return container;
 }
 
-// ====================== Utils ======================
+// ============== Utils ==============
 function escapeHtml(s){
   return String(s||'').replace(/[&<>"']/g, m => (
     {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]
