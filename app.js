@@ -1,221 +1,279 @@
-/***********************
- * CONFIG & STATE
- ***********************/
-const CFG = window.APP_CONFIG || {};
-const ENDPOINT = CFG.SCRIPT_ENDPOINT;
-const SECRET   = CFG.SHARED_SECRET;
+// ====================== Simple SPA Router ======================
+const app = document.getElementById('app');
 
-let currentUser = null;
-let currentToken = '';
-let currentQuiz = null;
-
-/***********************
- * DOM HELPERS
- ***********************/
-function $(id){ return document.getElementById(id); }
-function showPage(id){
-  document.querySelectorAll('section').forEach(sec => sec.classList.add('hidden'));
-  $(id).classList.remove('hidden');
+function render(route) {
+  const hash = (route || '').replace(/^#/, '');
+  const [base, qs] = hash.split('?');
+  const params = new URLSearchParams(qs || '');
+  switch ((base || 'home').toLowerCase()) {
+    case 'server-quiz':  return renderServerQuizFromURL(params);
+    case 'lesson':       return renderLessonFromURL(params);
+    case 'assignments':  return renderAssignmentsGate(); // placeholder if you already have one
+    default:             return renderHome();
+  }
 }
+window.addEventListener('hashchange', () => render(location.hash));
+window.addEventListener('load', () => render(location.hash));
+
+// ====================== Views ======================
+function renderHome() {
+  app.innerHTML = `
+    <div class="card">
+      <h2>Welcome</h2>
+      <p>Use <strong>Lesson</strong> to embed a Google Slides deck and <strong>Quiz</strong> URLs to launch topic-mix quizzes.</p>
+      <h3>Examples</h3>
+      <ul>
+        <li>Lesson: <code>#lesson?title=Regs&src=PASTE_SLIDES_EMBED_SRC</code></li>
+        <li>Quiz (single): <code>#server-quiz?lesson=KB01&pass=70&topics=G1.PGENINST-K:4</code></li>
+        <li>Quiz (multi): <code>#server-quiz?lesson=KBQ1&pass=70&topics=G1.PGENINST-K:4,G5.PWTBAL-K:4,G6.PACPERFP-K:3,K2.PLTQALREG-K:6,K1.PFPREP-K:3</code></li>
+      </ul>
+    </div>
+  `;
+}
+
+function renderLessonFromURL(params) {
+  const title = params.get('title') || 'Lesson';
+  const src   = params.get('src') || '';
+  app.innerHTML = `
+    <div class="card">
+      <h2>${escapeHtml(title)}</h2>
+      <div class="card">
+        ${src
+          ? `<iframe style="width:100%;height:520px" frameborder="0" allowfullscreen src="${src}"></iframe>`
+          : `<p><em>No slide src provided. Publish your deck to the web → Embed, then paste the iframe <code>src</code> as the "src" param.</em></p>`}
+      </div>
+    </div>
+  `;
+}
+
+// ====================== Backend helpers ======================
+async function fetchQuizFromServer(topicsSpec) {
+  const endpoint = (window.APP_CONFIG || {}).SCRIPT_ENDPOINT;
+  const secret   = (window.APP_CONFIG || {}).SHARED_SECRET;
+  const url = new URL(endpoint);
+  url.searchParams.set('action', 'quiz');
+  url.searchParams.set('secret', secret);
+  url.searchParams.set('topics', topicsSpec);
+  const resp = await fetch(url.toString());
+  if (!resp.ok) throw new Error(`Quiz HTTP ${resp.status}`);
+  const data = await resp.json().catch(async ()=>({ error: await resp.text() }));
+  if (data.error) throw new Error(data.error);
+  return data.questions || [];
+}
+
+async function submitQuizResults({ student, email, lesson, score, total, answers, passPercent }) {
+  const endpoint = (window.APP_CONFIG || {}).SCRIPT_ENDPOINT;
+  const secret   = (window.APP_CONFIG || {}).SHARED_SECRET;
+  const url = new URL(endpoint);
+  url.searchParams.set('action', 'submit');  // must match doPost
+  url.searchParams.set('secret', secret);
+
+  const resp = await fetch(url.toString(), {
+    method: 'POST',
+    // no custom headers -> avoids CORS preflight
+    body: JSON.stringify({ student, email, lesson, score, total, answers, passPercent })
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(()=>'(no body)');
+    throw new Error(`Submit HTTP ${resp.status}: ${text.slice(0,200)}`);
+  }
+  const out = await resp.json().catch(async ()=>({ error: await resp.text() }));
+  if (out.error) {
+    // propagate server-side logical errors
+    throw new Error(out.error);
+  }
+  return out; // {status:'ok', pct, passed, ...}
+}
+
+// ====================== Quiz view ======================
+async function renderServerQuizFromURL(params) {
+  const lesson      = params.get('lesson') || '';
+  const passPercent = Number(params.get('pass') || 70);
+  const topicsSpec  = params.get('topics') || '';
+
+  app.innerHTML = `<div class="card">
+    <p>Contacting server…</p>
+    <p><small>Topics: <code>${escapeHtml(topicsSpec)}</code></small></p>
+  </div>`;
+
+  let questions;
+  try {
+    questions = await fetchQuizFromServer(topicsSpec);
+  } catch (err) {
+    app.innerHTML = `<div class="card"><h3>Quiz error</h3><p>${escapeHtml(err.message || String(err))}</p></div>`;
+    return;
+  }
+
+  const norm = questions.map(q => ({
+    id: q.id,
+    text: q.q || q.text || '',
+    choices: q.choices || [],
+    correct: (q.correct || '').toString().toUpperCase(),
+    explanation: q.explanation || '',
+    figure: q.figure || null
+  }));
+
+  app.innerHTML = `
+    <div class="card">
+      <h2>Quiz</h2>
+      <p><strong>Lesson:</strong> ${escapeHtml(lesson || '(unspecified)')} • <strong>Passing:</strong> ${passPercent}%</p>
+
+      <div class="card">
+        <label>Name<br><input id="q_name" type="text" placeholder="Your name"/></label><br><br>
+        <label>Email<br><input id="q_email" type="email" placeholder="you@example.com"/></label>
+      </div>
+
+      <div id="q_list"></div>
+
+      <div style="margin-top:1rem">
+        <button class="btn" id="q_submit">Submit</button>
+      </div>
+
+      <div id="q_result" class="card" style="display:none"></div>
+    </div>
+  `;
+
+  const qList = document.getElementById('q_list');
+  const selections = new Array(norm.length).fill(null);
+  norm.forEach((q, idx) => {
+    const node = renderQuizQuestion(q, idx);
+    node.querySelectorAll('input[type=radio]').forEach(r => {
+      r.onchange = () => selections[idx] = Number(r.value);
+    });
+    qList.appendChild(node);
+  });
+
+  // Submit handler (locks UI; no visible "retry"; shows PASS/FAIL; friendly duplicate message)
+  document.getElementById('q_submit').onclick = async () => {
+    const nameEl  = document.getElementById('q_name');
+    const emailEl = document.getElementById('q_email');
+    const name  = (nameEl?.value || '').trim();
+    const email = (emailEl?.value || '').trim();
+
+    const showResult = (html) => {
+      const box = document.getElementById('q_result');
+      box.style.display = 'block';
+      box.innerHTML = `<h3>Result</h3><p>${html}</p>`;
+    };
+
+    // lock UI
+    const submitBtn = document.getElementById('q_submit');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.style.pointerEvents = 'none';
+      submitBtn.style.opacity = '0.6';
+      setTimeout(() => { submitBtn.style.display = 'none'; }, 50);
+    }
+    if (nameEl)  nameEl.disabled  = true;
+    if (emailEl) emailEl.disabled = true;
+    document.querySelectorAll('#q_list input[type=radio]').forEach(el => el.disabled = true);
+
+    // grade locally
+    let correctCount = 0;
+    const answersObj = {};
+    norm.forEach((q, i) => {
+      const choiceIdx = selections[i];
+      const chosenLetter = idxToLetter(choiceIdx);
+      answersObj[q.id] = chosenLetter || '';
+      if ((chosenLetter || '') === q.correct) correctCount++;
+    });
+
+    const scorePct = Math.round((correctCount / norm.length) * 100);
+    const passed   = scorePct >= passPercent;
+
+    try {
+      await submitQuizResults({
+        student: name,
+        email,
+        lesson,
+        score: correctCount,
+        total: norm.length,
+        answers: answersObj,
+        passPercent
+      });
+      showResult(`Score: <strong>${scorePct}%</strong> (${correctCount} / ${norm.length})<br>Status: ${passed ? '✅ PASS' : '❌ FAIL'}`);
+    } catch (err) {
+      const msg = String(err.message || err);
+      const friendly = msg.includes('already_submitted')
+        ? 'An attempt for this lesson already exists for your account. Ask your instructor if a retake should be enabled.'
+        : 'Submit error: ' + escapeHtml(msg);
+      showResult(friendly);
+    }
+  };
+}
+
+// ====================== Question Renderer (with figure fallbacks) ======================
+function renderQuizQuestion(q, idx) {
+  const container = document.createElement('div');
+  container.className = 'question';
+
+  const qText = document.createElement('div');
+  qText.innerHTML = `<strong>Q${idx + 1}.</strong> ${escapeHtml(q.text)}`;
+  container.appendChild(qText);
+
+  const fig = q.figure || null;
+  const sources = [];
+  if (fig) {
+    if (fig.url) sources.push(fig.url);
+    if (fig.altUrl) sources.push(fig.altUrl);
+    if (fig.thumb) sources.push(fig.thumb);
+  }
+  if (sources.length) {
+    const figWrap = document.createElement('div');
+    figWrap.className = 'quiz-figure';
+    figWrap.style.margin = '.5rem 0 1rem';
+
+    const img = document.createElement('img');
+    img.alt = `Figure ${fig.number || ''}`;
+    img.style.maxWidth = '100%';
+    img.style.border = '1px solid #eee';
+    img.style.borderRadius = '6px';
+    img.style.height = 'auto';
+    if (fig.width) img.style.width = `${fig.width}px`;
+
+    let sidx = 0;
+    img.src = sources[sidx];
+    img.onerror = () => {
+      sidx += 1;
+      if (sidx < sources.length) img.src = sources[sidx];
+    };
+
+    const cap = document.createElement('div');
+    cap.className = 'figure-caption';
+    cap.style.fontSize = '.85rem';
+    cap.style.color = '#555';
+    cap.textContent = `Figure ${fig.number || ''}`;
+
+    figWrap.appendChild(img);
+    figWrap.appendChild(cap);
+    container.appendChild(figWrap);
+  }
+
+  const choicesWrap = document.createElement('div');
+  choicesWrap.className = 'choices';
+  choicesWrap.style.display = 'grid';
+  choicesWrap.style.gap = '.5rem';
+
+  (q.choices || []).forEach((choice, i) => {
+    const label = document.createElement('label');
+    label.className = 'quiz-choice';
+    label.style.cursor = 'pointer';
+    label.innerHTML = `
+      <input type="radio" name="q${idx}" value="${i}" />
+      ${escapeHtml(String(choice))}
+    `;
+    choicesWrap.appendChild(label);
+  });
+
+  container.appendChild(choicesWrap);
+  return container;
+}
+
+// ====================== Utils ======================
 function escapeHtml(s){
   return String(s||'').replace(/[&<>"']/g, m => (
     {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]
   ));
 }
 function idxToLetter(i){ return ['A','B','C','D'][Number(i)] || ''; }
-
-/***********************
- * API HELPERS
- * (GET for login/assignments/quiz, POST for submit)
- ***********************/
-async function apiGet(params){
-  const url = new URL(ENDPOINT);
-  Object.entries(params||{}).forEach(([k,v]) => url.searchParams.set(k, v));
-  const resp = await fetch(url.toString());
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const data = await resp.json().catch(async ()=>({ error: await resp.text() }));
-  if (data.error) throw new Error(data.error);
-  return data;
-}
-async function apiPost(params, body){
-  const url = new URL(ENDPOINT);
-  Object.entries(params||{}).forEach(([k,v]) => url.searchParams.set(k, v));
-  const resp = await fetch(url.toString(), {
-    method:'POST',
-    body: JSON.stringify(body||{})
-  });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const data = await resp.json().catch(async ()=>({ error: await resp.text() }));
-  if (data.error) throw new Error(data.error);
-  return data;
-}
-
-/***********************
- * AUTH
- ***********************/
-async function login(){
-  const username = $('loginUsername').value.trim();
-  const password = $('loginPassword').value;
-  const status = $('loginStatus');
-  status.textContent = 'Signing in…';
-  try{
-    // Apps Script expects GET: action=login&user=&pass=
-    const out = await apiGet({ action:'login', user: username, pass: password });
-    currentToken = out.token;
-    currentUser  = out.user;
-    status.textContent = `Welcome, ${escapeHtml(currentUser.name || currentUser.email)}`;
-    showPage('assignmentsPage');
-    loadAssignments();
-  }catch(err){
-    status.textContent = 'Login failed: ' + (err.message || String(err));
-  }
-}
-function logout(){
-  currentUser = null;
-  currentToken = '';
-  currentQuiz = null;
-  $('loginUsername').value = '';
-  $('loginPassword').value = '';
-  $('loginStatus').textContent = '';
-  showPage('loginPage');
-}
-
-/***********************
- * ASSIGNMENTS (student)
- ***********************/
-async function loadAssignments(){
-  if (!currentToken){ showPage('loginPage'); return; }
-  const list = $('assignmentsList');
-  list.textContent = 'Loading…';
-  try{
-    // Apps Script expects GET: action=assignments&token=
-    const out = await apiGet({ action:'assignments', token: currentToken });
-    const items = out.assignments || [];
-    if (!items.length){
-      list.innerHTML = '<em>No active assignments.</em>';
-      return;
-    }
-    list.innerHTML = '';
-    items.forEach(a => {
-      const div = document.createElement('div');
-      div.className = 'assignment';
-      const dur = a.DurationMin ? ` • ${a.DurationMin} min` : '';
-      div.innerHTML = `
-        <b>${escapeHtml(a.Title || a.Lesson)}</b>
-        <div class="muted">Lesson: ${escapeHtml(a.Lesson)} • Pass ${a.Pass}%${dur}</div>
-        <button data-lesson="${escapeHtml(a.Lesson)}"
-                data-topics="${escapeHtml(a.Topics || '')}"
-                data-pass="${Number(a.Pass||70)}">Start</button>
-      `;
-      const btn = div.querySelector('button');
-      btn.onclick = () => startQuiz(btn.getAttribute('data-lesson'),
-                                     btn.getAttribute('data-topics')||'',
-                                     Number(btn.getAttribute('data-pass')||70));
-      list.appendChild(div);
-    });
-  }catch(err){
-    list.textContent = 'Error: ' + (err.message || String(err));
-  }
-}
-
-/***********************
- * QUIZ (fetch, render, submit)
- ***********************/
-async function fetchQuiz(topicsSpec){
-  // Apps Script expects GET: action=quiz&secret=&topics=
-  const out = await apiGet({ action:'quiz', secret: SECRET, topics: topicsSpec });
-  return out.questions || [];
-}
-
-async function startQuiz(lesson, topicsSpec, passPercent){
-  if (!topicsSpec){
-    alert('This assignment has no Topics set in QuizCatalog.');
-    return;
-  }
-  $('quizTitle').textContent = `${lesson}`;
-  $('quizStatus').textContent = '';
-  const form = $('quizForm');
-  form.innerHTML = 'Loading questions…';
-  try{
-    const questions = await fetchQuiz(topicsSpec);
-    currentQuiz = { lesson, passPercent, questions };
-    form.innerHTML = '';
-    questions.forEach((q, i) => {
-      // Back-end returns { id, text, choices, correct, ... }
-      const div = document.createElement('div');
-      div.innerHTML = `
-        <p>${i+1}. ${escapeHtml(q.text || q.q || '')}</p>
-        ${(q.choices || q.options || []).map((opt, j) =>
-          `<label><input type="radio" name="q${i}" value="${j}"> ${escapeHtml(String(opt))}</label><br>`
-        ).join('')}
-      `;
-      form.appendChild(div);
-      // Optional figure
-      if (q.figure){
-        const fwrap = document.createElement('div');
-        const img = document.createElement('img');
-        img.style.maxWidth = '100%';
-        const sources = [q.figure.url, q.figure.altUrl, q.figure.thumb].filter(Boolean);
-        let s = 0; img.src = sources[s];
-        img.onerror = () => { s += 1; if (s < sources.length) img.src = sources[s]; };
-        fwrap.appendChild(img);
-        const cap = document.createElement('div');
-        cap.textContent = `Figure ${q.figure.number||''}`;
-        cap.style.color = '#666';
-        cap.style.fontSize = '0.9em';
-        form.appendChild(fwrap);
-        form.appendChild(cap);
-      }
-    });
-    showPage('quizPage');
-  }catch(err){
-    $('quizStatus').textContent = 'Quiz error: ' + (err.message || String(err));
-  }
-}
-
-async function submitQuiz(){
-  if (!currentQuiz){ return; }
-  const form = $('quizForm');
-  // grade locally
-  let correct = 0;
-  const answersObj = {};
-  currentQuiz.questions.forEach((q, i) => {
-    const picked = form.querySelector(`input[name="q${i}"]:checked`);
-    const choiceIdx = picked ? Number(picked.value) : null;
-    const letter = idxToLetter(choiceIdx);
-    answersObj[q.id] = letter || '';
-    if ((letter||'') === (q.correct||'')) correct += 1;
-  });
-  const total = currentQuiz.questions.length;
-  const pct = Math.round((correct/total)*100);
-  const passed = pct >= (currentQuiz.passPercent || 70);
-
-  $('quizStatus').textContent = 'Submitting…';
-  try{
-    // Apps Script expects POST action=submit&secret=..., body has student/email/lesson/score/total/answers
-    const nameEl  = $('loginUsername'); // if you want to collect name/email separately, add inputs to the quiz page
-    const emailEl = $('loginUsername'); // placeholder: using username field for demo
-    const studentName = currentUser?.name || '';
-    const email       = currentUser?.email || '';
-
-    await apiPost({ action:'submit', secret: SECRET }, {
-      student: studentName,
-      email,
-      lesson: currentQuiz.lesson,
-      score: correct,
-      total,
-      answers: answersObj,
-      passPercent: currentQuiz.passPercent || 70
-    });
-    $('quizStatus').innerHTML = `Score: <b>${pct}%</b> (${correct}/${total}) • ${passed ? '✅ PASS' : '❌ FAIL'}`;
-    // return to assignments after a beat
-    setTimeout(()=>{ showPage('assignmentsPage'); loadAssignments(); }, 1200);
-  }catch(err){
-    $('quizStatus').textContent = 'Submit error: ' + (err.message || String(err));
-  }
-}
-
-/***********************
- * INITIAL VIEW
- ***********************/
-showPage('loginPage');  // default start
