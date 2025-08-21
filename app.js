@@ -8,7 +8,7 @@ function render(route) {
   switch ((base || 'home').toLowerCase()) {
     case 'server-quiz':  return renderServerQuizFromURL(params);
     case 'lesson':       return renderLessonFromURL(params);
-    case 'assignments':  return renderAssignmentsGate(); // placeholder if you already have one
+    case 'assignments':  return renderAssignmentsGate(); // <-- restored login gate
     default:             return renderHome();
   }
 }
@@ -27,6 +27,7 @@ function renderHome() {
         <li>Quiz (single): <code>#server-quiz?lesson=KB01&pass=70&topics=G1.PGENINST-K:4</code></li>
         <li>Quiz (multi): <code>#server-quiz?lesson=KBQ1&pass=70&topics=G1.PGENINST-K:4,G5.PWTBAL-K:4,G6.PACPERFP-K:3,K2.PLTQALREG-K:6,K1.PFPREP-K:3</code></li>
       </ul>
+      <p><a class="btn" href="#assignments">Go to Assignments</a></p>
     </div>
   `;
 }
@@ -46,10 +47,124 @@ function renderLessonFromURL(params) {
   `;
 }
 
-// ====================== Backend helpers ======================
+// ====================== Auth + Assignments ======================
+function getConfig(){
+  const cfg = (window.APP_CONFIG || {});
+  return { endpoint: cfg.SCRIPT_ENDPOINT, secret: cfg.SHARED_SECRET };
+}
+
+function getSession(){
+  try { return JSON.parse(localStorage.getItem('ppl_session') || '{}'); }
+  catch { return {}; }
+}
+function setSession(s){ localStorage.setItem('ppl_session', JSON.stringify(s || {})); }
+function clearSession(){ localStorage.removeItem('ppl_session'); }
+
+async function loginRequest(email, pass){
+  const { endpoint } = getConfig();
+  const url = new URL(endpoint);
+  url.searchParams.set('action','login');
+  url.searchParams.set('user', email);
+  url.searchParams.set('pass', pass);
+  const resp = await fetch(url.toString());
+  const data = await resp.json().catch(async ()=>({ error: await resp.text() }));
+  if (data.error) throw new Error(data.error);
+  return data; // {token, user, build}
+}
+
+async function fetchAssignments(token){
+  const { endpoint } = getConfig();
+  const url = new URL(endpoint);
+  url.searchParams.set('action','assignments');
+  url.searchParams.set('token', token);
+  url.searchParams.set('debug','1'); // helpful while we’re testing
+  const resp = await fetch(url.toString());
+  const data = await resp.json().catch(async ()=>({ error: await resp.text() }));
+  if (data.error) throw new Error(data.error);
+  return data.assignments || [];
+}
+
+function renderAssignmentsGate(){
+  const sess = getSession();
+  if (sess && sess.token) {
+    return renderAssignmentsList();
+  }
+  app.innerHTML = `
+    <div class="card">
+      <h2>Assignments</h2>
+      <p>Log in to see quizzes assigned to your class.</p>
+      <div class="card">
+        <label>Email<br><input id="login_email" type="email" placeholder="you@example.com"></label><br><br>
+        <label>Password<br><input id="login_pass" type="password" placeholder="••••••••"></label><br><br>
+        <button class="btn" id="login_btn">Log in</button>
+        <div id="login_msg" style="margin-top:.75rem;color:#b00;"></div>
+      </div>
+    </div>
+  `;
+  const btn = document.getElementById('login_btn');
+  btn.onclick = async () => {
+    const email = (document.getElementById('login_email').value || '').trim();
+    const pass  = (document.getElementById('login_pass').value || '').trim();
+    const msgEl = document.getElementById('login_msg');
+    msgEl.textContent = '';
+    btn.disabled = true;
+    try {
+      const out = await loginRequest(email, pass);
+      setSession({ token: out.token, user: out.user });
+      renderAssignmentsList();
+    } catch (err) {
+      msgEl.textContent = 'Login failed: ' + String(err.message || err);
+      btn.disabled = false;
+    }
+  };
+}
+
+async function renderAssignmentsList(){
+  const sess = getSession();
+  if (!sess || !sess.token) return renderAssignmentsGate();
+  app.innerHTML = `
+    <div class="card">
+      <h2>Assignments</h2>
+      <p>Logged in as <strong>${escapeHtml(sess.user?.name || sess.user?.email || '')}</strong>
+        <button class="btn" id="logout_btn" style="float:right">Log out</button></p>
+      <div id="as_list" class="card"><em>Loading…</em></div>
+    </div>
+  `;
+  document.getElementById('logout_btn').onclick = () => { clearSession(); renderAssignmentsGate(); };
+
+  try {
+    const assignments = await fetchAssignments(sess.token);
+    const box = document.getElementById('as_list');
+    if (!assignments.length) {
+      box.innerHTML = `<p><em>No active assignments.</em></p>`;
+      return;
+    }
+    // Render each assignment with a "Start" link that routes to server-quiz with the encoded topics
+    const items = assignments.map(a => {
+      const topicsQS = encodeURIComponent(a.Topics || '');
+      const passQS   = encodeURIComponent(a.Pass || '70');
+      const lessonQS = encodeURIComponent(a.Lesson || '');
+      const href = `#server-quiz?lesson=${lessonQS}&pass=${passQS}&topics=${topicsQS}`;
+      const title = escapeHtml(a.Title || a.Lesson || 'Quiz');
+      const when  = (a.Window || '').replace('T',' ');
+      return `
+        <div class="card" style="margin:.5rem 0">
+          <div><strong>${title}</strong></div>
+          <div style="font-size:.9rem;color:#555">${escapeHtml(when)}</div>
+          <div style="margin-top:.5rem"><a class="btn" href="${href}">Start</a></div>
+        </div>
+      `;
+    }).join('');
+    box.innerHTML = items;
+  } catch (err) {
+    const box = document.getElementById('as_list');
+    box.innerHTML = `<p style="color:#b00">Error loading assignments: ${escapeHtml(err.message || err)}</p>`;
+  }
+}
+
+// ====================== Backend helpers for quizzes ======================
 async function fetchQuizFromServer(topicsSpec) {
-  const endpoint = (window.APP_CONFIG || {}).SCRIPT_ENDPOINT;
-  const secret   = (window.APP_CONFIG || {}).SHARED_SECRET;
+  const { endpoint, secret } = getConfig();
   const url = new URL(endpoint);
   url.searchParams.set('action', 'quiz');
   url.searchParams.set('secret', secret);
@@ -62,8 +177,7 @@ async function fetchQuizFromServer(topicsSpec) {
 }
 
 async function submitQuizResults({ student, email, lesson, score, total, answers, passPercent }) {
-  const endpoint = (window.APP_CONFIG || {}).SCRIPT_ENDPOINT;
-  const secret   = (window.APP_CONFIG || {}).SHARED_SECRET;
+  const { endpoint, secret } = getConfig();
   const url = new URL(endpoint);
   url.searchParams.set('action', 'submit');  // must match doPost
   url.searchParams.set('secret', secret);
@@ -80,7 +194,6 @@ async function submitQuizResults({ student, email, lesson, score, total, answers
   }
   const out = await resp.json().catch(async ()=>({ error: await resp.text() }));
   if (out.error) {
-    // propagate server-side logical errors
     throw new Error(out.error);
   }
   return out; // {status:'ok', pct, passed, ...}
