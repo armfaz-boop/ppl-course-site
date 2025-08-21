@@ -112,7 +112,6 @@ function renderAssignmentsGate(){
     </div>
   `;
 
-  // Attach handler robustly
   const btn = document.getElementById('login_btn');
   if (!btn) return toast('Login button not found in DOM');
   btn.addEventListener('click', async () => {
@@ -266,6 +265,20 @@ async function renderServerQuizFromURL(params) {
     </div>
   `;
 
+  // --- Prefill from session and lock inputs if available ---
+  const sess = (function(){ try { return JSON.parse(localStorage.getItem('ppl_session') || '{}'); } catch { return {}; } })();
+  const loggedName  = sess?.user?.name || sess?.user?.email || '';
+  const loggedEmail = sess?.user?.email || '';
+  const nameElInit  = document.getElementById('q_name');
+  const emailElInit = document.getElementById('q_email');
+  if (nameElInit && loggedName)  { nameElInit.value = loggedName;  nameElInit.disabled = true; }
+  if (emailElInit && loggedEmail){ emailElInit.value = loggedEmail; emailElInit.disabled = true; }
+  // Optional note
+  const headerParas = app.querySelectorAll('.card > p');
+  if (headerParas && headerParas[0] && loggedEmail) {
+    headerParas[0].innerHTML += ` &nbsp; <span style="font-size:.9rem;color:#555">(logged in as ${escapeHtml(loggedEmail)})</span>`;
+  }
+
   const qList = document.getElementById('q_list');
   const selections = new Array(norm.length).fill(null);
   norm.forEach((q, idx) => {
@@ -279,8 +292,9 @@ async function renderServerQuizFromURL(params) {
   document.getElementById('q_submit')?.addEventListener('click', async () => {
     const nameEl  = document.getElementById('q_name');
     const emailEl = document.getElementById('q_email');
-    const name  = (nameEl?.value || '').trim();
-    const email = (emailEl?.value || '').trim();
+    const sess2   = (function(){ try { return JSON.parse(localStorage.getItem('ppl_session') || '{}'); } catch { return {}; } })();
+    const name  = ((nameEl?.value || '').trim())  || (sess2?.user?.name || sess2?.user?.email || '');
+    const email = ((emailEl?.value || '').trim()) || (sess2?.user?.email || '');
 
     const showResult = (html) => {
       const box = document.getElementById('q_result');
