@@ -1,51 +1,42 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Flight School Portal</title>
-  <script>
-    window.APP_CONFIG = {
-      SCRIPT_ENDPOINT: "https://script.google.com/macros/s/AKfycbyln1kbCYaIMtxv3Gg9l5-1pszamrVp-I4htHtvhzhM5bAGBSAjcpnhej1gKzPVf3BjEg/exec", 
-      SHARED_SECRET: "ppl_9x7d3-MySecret-2025"
-    };
-  </script>
-  <script src="app.js" defer></script>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Private Pilot Ground — Course</title>
+  <link rel="stylesheet" href="styles.css"/>
   <style>
-    body { font-family: Arial, sans-serif; margin: 2em; }
-    nav button { margin-right: 1em; }
-    .hidden { display: none; }
-    .assignment { border: 1px solid #ccc; padding: 10px; margin: 10px 0; }
+    .toast { background:#fee; color:#900; border:1px solid #f99; padding:.5rem .75rem; border-radius:6px; font-size:.9rem; display:none; margin:.5rem 0; }
+    .card { border:1px solid #eee; border-radius:8px; padding:1rem; margin:.75rem 0; }
+    .btn { display:inline-block; padding:.5rem .9rem; border:1px solid #ccc; border-radius:6px; text-decoration:none; cursor:pointer; }
   </style>
 </head>
 <body>
-  <h1>Flight School Portal</h1>
-  <nav>
-    <button onclick="showPage('loginPage')">Login</button>
-    <button onclick="showPage('assignmentsPage')">Assignments</button>
-    <button onclick="logout()">Logout</button>
-  </nav>
+  <header>
+    <h1>Private Pilot Ground — Course</h1>
+    <nav>
+      <a href="#home">Home</a>
+      <a href="#lesson">Lesson</a>
+      <a href="#assignments">Assignments</a>
+      <a href="#server-quiz">Quiz</a>
+    </nav>
+  </header>
 
-  <!-- Login -->
-  <section id="loginPage">
-    <h2>Login</h2>
-    <input id="loginUsername" placeholder="Email or Username"><br>
-    <input id="loginPassword" type="password" placeholder="Password"><br>
-    <button onclick="login()">Login</button>
-    <p id="loginStatus"></p>
-  </section>
+  <main id="app"></main>
+  <div id="toast" class="toast"></div>
 
-  <!-- Assignments -->
-  <section id="assignmentsPage" class="hidden">
-    <h2>Your Assignments</h2>
-    <div id="assignmentsList"></div>
-  </section>
+  <footer>
+    <small>© Your Name — Training use only. Not official FAA material.</small>
+  </footer>
 
-  <!-- Quiz -->
-  <section id="quizPage" class="hidden">
-    <h2 id="quizTitle"></h2>
-    <form id="quizForm"></form>
-    <button onclick="submitQuiz()">Submit Quiz</button>
-    <p id="quizStatus"></p>
-  </section>
+  <!-- IMPORTANT: keep this before app.js -->
+  <script>
+    window.APP_CONFIG = {
+      // ⬇️ paste your CURRENT Apps Script Web App URL (ends with /exec)
+      SCRIPT_ENDPOINT: "https://script.google.com/macros/s/AKfycbyln1kbCYaIMtxv3Gg9l5-1pszamrVp-I4htHtvhzhM5bAGBSAjcpnhej1gKzPVf3BjEg/exec",
+      SHARED_SECRET: "ppl_9x7d3-MySecret-2025"
+    };
+  </script>
+  <script src="app.js?v=loginfix2" defer></script>
 </body>
 </html>
