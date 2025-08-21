@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Flight School Portal</title>
+  <script>
+    window.APP_CONFIG = {
+      SCRIPT_ENDPOINT: "https://script.google.com/macros/s/AKfycbyxPI8ch7PWqArvu1XS272aD1UqCzKrq6g_itBgw8vp_y7z8B2lq56SL7xIEmfEMGc41w/exec", 
+      SHARED_SECRET: "ppl_9x7d3-MySecret-2025"
+    };
+  </script>
+  <script src="app.js" defer></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2em; }
+    nav button { margin-right: 1em; }
+    .hidden { display: none; }
+    .assignment { border: 1px solid #ccc; padding: 10px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h1>Flight School Portal</h1>
+  <nav>
+    <button onclick="showPage('loginPage')">Login</button>
+    <button onclick="showPage('assignmentsPage')">Assignments</button>
+    <button onclick="logout()">Logout</button>
+  </nav>
+
+  <!-- Login -->
+  <section id="loginPage">
+    <h2>Login</h2>
+    <input id="loginUsername" placeholder="Email or Username"><br>
+    <input id="loginPassword" type="password" placeholder="Password"><br>
+    <button onclick="login()">Login</button>
+    <p id="loginStatus"></p>
+  </section>
+
+  <!-- Assignments -->
+  <section id="assignmentsPage" class="hidden">
+    <h2>Your Assignments</h2>
+    <div id="assignmentsList"></div>
+  </section>
+
+  <!-- Quiz -->
+  <section id="quizPage" class="hidden">
+    <h2 id="quizTitle"></h2>
+    <form id="quizForm"></form>
+    <button onclick="submitQuiz()">Submit Quiz</button>
+    <p id="quizStatus"></p>
+  </section>
+</body>
+</html>
